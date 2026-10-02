@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"sync"
 )
 
 const (
@@ -23,9 +24,14 @@ func main() {
 	server()
 }
 
+// Set of connected clients, shared between the accept loop and the broadcaster
+var (
+	clients    = make(map[net.Conn]struct{})
+	clients_mu sync.Mutex
+)
+
 func server() {
 	msg_channel := make(chan message)
-	clients := make(map[net.Conn]struct{})
 
 	fmt.Println("Server Running...")
 	server, err := net.Listen(SERVER_TYPE, SERVER_HOST+":"+SERVER_PORT)
@@ -38,7 +44,7 @@ func server() {
 	fmt.Println("Listening on " + SERVER_HOST + ":" + SERVER_PORT)
 	fmt.Println("Waiting on client...")
 
-	go broadcast_clients(msg_channel, clients)
+	go broadcast_clients(msg_channel)
 
 	for {
 		// Wait for connections
@@ -49,7 +55,9 @@ func server() {
 		}
 		fmt.Printf("Client Connected\n")
 		// Add client connection to map
+		clients_mu.Lock()
 		clients[connection] = struct{}{}
+		clients_mu.Unlock()
 		// Start routine to handle incoming client messages
 		go read_client(connection, msg_channel)
 	}
@@ -57,10 +65,15 @@ func server() {
 
 // Handle incoming messages from clients
 func read_client(connection net.Conn, msg_channel chan message) {
-	defer connection.Close()
+	defer func() {
+		clients_mu.Lock()
+		delete(clients, connection)
+		clients_mu.Unlock()
+		connection.Close()
+	}()
+	decoder := gob.NewDecoder(connection)
 	for {
 		var incoming_msg message
-		decoder := gob.NewDecoder(connection)
 		err := decoder.Decode(&incoming_msg)
 		if err != nil {
 			fmt.Println("Error Decoding: ", err.Error())
@@ -72,17 +85,30 @@ func read_client(connection net.Conn, msg_channel chan message) {
 }
 
 // Handle outgoing messages to clients
-func broadcast_clients(msg_channel chan message, clients map[net.Conn]struct{}) {
+func broadcast_clients(msg_channel chan message) {
+	encoders := make(map[net.Conn]*gob.Encoder)
 	for {
 		outgoing_msg := <-msg_channel
+		clients_mu.Lock()
 		for client := range clients {
-			encoder := gob.NewEncoder(client)
+			encoder, ok := encoders[client]
+			if !ok {
+				encoder = gob.NewEncoder(client)
+				encoders[client] = encoder
+			}
 			err := encoder.Encode(&outgoing_msg)
 			if err != nil {
 				fmt.Println("Error Encoding: ", err.Error())
 				delete(clients, client)
-				break
+				client.Close()
 			}
 		}
+		// Forget encoders for clients that have disconnected
+		for client := range encoders {
+			if _, ok := clients[client]; !ok {
+				delete(encoders, client)
+			}
+		}
+		clients_mu.Unlock()
 	}
 }

@@ -42,17 +42,21 @@ func client() {
 	// Start checking for messages from server
 	go read_server(connection, client_id, username)
 
+	encoder := gob.NewEncoder(connection)
 	for {
 		// Prompt input
 		fmt.Printf("%s> ", username)
 		// Wait for input
 		reader := bufio.NewReader(os.Stdin)
-		input, _ := reader.ReadString('\n')
+		input, err := reader.ReadString('\n')
+		if err != nil {
+			// Stdin closed (Ctrl+D), so leave the chat
+			return
+		}
 
 		outgoing_msg := message{Id: client_id, Username: username, Message: input}
 
-		encoder := gob.NewEncoder(connection)
-		err := encoder.Encode(&outgoing_msg)
+		err = encoder.Encode(&outgoing_msg)
 		if err != nil {
 			fmt.Println("Error reading:", err.Error())
 		}
@@ -61,9 +65,10 @@ func client() {
 
 func read_server(connection net.Conn, client_id string, username string) {
 	defer connection.Close()
-	var incoming_msg message
+	decoder := gob.NewDecoder(connection)
 	for {
-		decoder := gob.NewDecoder(connection)
+		// Fresh struct each time: gob skips empty fields, so a reused one keeps old values
+		var incoming_msg message
 		err := decoder.Decode(&incoming_msg)
 		if err != nil {
 			fmt.Println("Error Decoding: ", err.Error())

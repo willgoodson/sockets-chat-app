@@ -41,9 +41,6 @@ Type a username, then start chatting.
 
 ## Future Work
 
-- [ ] Protect the shared `clients` map with a mutex (it's currently read and written from multiple goroutines)
-- [ ] Create one gob encoder/decoder per connection instead of one per message, so the stream stays in sync
-- [ ] Remove disconnected clients on read errors as well as write errors, and keep broadcasting to the remaining clients after one write fails (it currently `break`s)
 - [ ] Announce join/leave events to the room
 - [ ] Make the host and port configurable with flags so it can run across machines
 - [ ] Move the shared `message` type into its own package used by both server and client
